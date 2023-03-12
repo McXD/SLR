@@ -1,4 +1,20 @@
-import os, sys
+# requirements.txt
+#
+# joblib==1.1.0
+# matplotlib==3.5.1
+# numpy==1.21.5
+# opencv_python==4.7.0.72
+# pandas==1.4.2
+# scikit_learn==1.2.2
+# scipy==1.7.3
+# seaborn==0.11.2
+
+# usage: slr.py [-h] [--data-dir DATA_DIR] [--image-dir IMAGE_DIR] [--feature-type FEATURE_TYPE]
+#               [--model-file MODEL_FILE]
+#               {collect,extract,train,play,visualize}
+
+import os
+import sys
 import argparse
 import cv2
 import numpy as np
@@ -9,37 +25,43 @@ from sklearn.preprocessing import normalize, StandardScaler
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import accuracy_score
 import joblib
-import string, random, time
+import string
+import random
+import time
 from scipy.cluster.vq import vq
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import pandas as pd
 
+
 def process_frame(frame):
-    # Define image size
+    """
+    Process a frame captured  by the camera
+    """
     img_size = (128, 128)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, img_size)
-    
+
     return gray
 
-# Define function for collecting images
+
 def collect_images(save_dir):
-    # Initialize camera object
+    """
+    Collect images from camera
+    """
     cap = cv2.VideoCapture(0)
     # Set the frame size
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 320)
-    
+
     if not os.path.exists(save_dir):
-      os.makedirs(save_dir)
-    
+        os.makedirs(save_dir)
+
     # Initialize counter for number of data files collected
     num_files = len(os.listdir(save_dir))
 
     while True:
-        # Capture frame from camera
         ret, frame = cap.read()
 
         # Check for key press
@@ -54,11 +76,10 @@ def collect_images(save_dir):
 
             # Process frame before saving
             gray = process_frame(frame)
-            # Save image
             cv2.imwrite(filename, gray)
 
             num_files += 1
-        
+
         # Display instructions on frame
         font = cv2.FONT_HERSHEY_SIMPLEX
         cv2.putText(frame, "Press any letter key (excluding J and Z) to save an image",
@@ -68,15 +89,16 @@ def collect_images(save_dir):
         cv2.putText(frame, f"{num_files} images collected",
                     (10, 150), font, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
-        # Display frame
         cv2.imshow("Camera", frame)
 
-    # Release camera and close window
     cap.release()
     cv2.destroyAllWindows()
 
-# Flat the image pixels as feature vector
+
 def extract_features_flat(img):
+    """
+    Flat the image pixels as feature vector
+    """
     # Flatten image
     feature_vector = img.flatten()
     # Normalize feature vector
@@ -84,10 +106,15 @@ def extract_features_flat(img):
 
     return feature_vector
 
+
 # Use global variable to store the codebook to avoid reloading
 codebook = None
-# Extract features using bag of visual words
+
+
 def extract_feature_bow(image):
+    """
+    Extract features using bag of visual words
+    """
     global codebook
     codebook_file = f"{args.data_dir}/codebook.npy"
 
@@ -115,25 +142,28 @@ def extract_feature_bow(image):
     sift = cv2.SIFT_create()
     keypoints, descriptors = sift.detectAndCompute(image, None)
 
-    # Compute the distances between the descriptors and the codebook centroids
+    # Compute the codebook ids
     codebook_ids, _ = vq(descriptors, codebook)
 
     # Compute the histogram of codebook ids
-    histogram, _ = np.histogram(codebook_ids, bins=range(len(codebook) + 1), density=True)
+    histogram, _ = np.histogram(
+        codebook_ids, bins=range(len(codebook) + 1), density=True)
 
     return histogram
+
 
 extract_feature_funcs = {
     "bow": extract_feature_bow,
     "flat": extract_features_flat
 }
 
-# Extract features and labels from images
+
 def extract_features(image_dir, feature_type):
-    # Get list of image filenames
+    """
+    Extract features and labels from images
+    """
     image_files = [f for f in os.listdir(image_dir) if f.endswith('.jpg')]
 
-    # Initialize list of features and labels
     features = []
     labels = []
 
@@ -141,7 +171,8 @@ def extract_features(image_dir, feature_type):
     for image_file in image_files:
         # Load image and resize to desired dimensions
         # Caution: needs to use grayscale for SIFT
-        img = cv2.imread(os.path.join(image_dir, image_file),cv2.IMREAD_GRAYSCALE)
+        img = cv2.imread(os.path.join(image_dir, image_file),
+                         cv2.IMREAD_GRAYSCALE)
         # Extract features with the specified feature type
         feature_vector = extract_feature_funcs[feature_type](img)
 
@@ -158,12 +189,15 @@ def extract_features(image_dir, feature_type):
     # Return features and labels
     return features, labels
 
-# Train SVM classifier
+
 def train_classifier(features, labels):
+    """
+    Train SVM classifier
+    """
     # Split data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(
         features, labels, test_size=0.2, random_state=42)
-    
+
     # Normalize features using StandardScaler
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
@@ -180,33 +214,28 @@ def train_classifier(features, labels):
     # Return trained SVM classifier and accuracy
     return svm, accuracy
 
-# Game loop
+
 def play_game(clf, feature_type):
-    # Start camera
     cap = cv2.VideoCapture(0)
-    # Set the frame size to 640x480 pixels
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 320)
-    
+
     # Define font for captions
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     # Define round time limit in seconds
     round_time_limit = 20
 
-    # Define list of letters to use for quiz
+    # All letters indexed by serial number
     letters = list(string.ascii_uppercase)
 
     # Start game loop
     score = 0
     round_num = 1
     while True:
-        # Prompt user with a random letter
         letter = random.choice(letters)
-        # Add prompt and score captions to frame
         prompt = "Round " + str(round_num) + " - Letter: " + letter
         score_caption = "Score: " + str(score)
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
         # Reset round timer
         round_start_time = time.time()
@@ -235,8 +264,9 @@ def play_game(clf, feature_type):
                     round_correct = True
                     break
 
-                # Add prompt and predicted letter captions to frame
-                cv2.putText(frame_capped, prompt, (10, 50), font, 0.6, (255, 255, 255), 1)
+                # Captions
+                cv2.putText(frame_capped, prompt, (10, 50),
+                            font, 0.6, (255, 255, 255), 1)
                 cv2.putText(frame_capped, score_caption, (10, 100),
                             font, 0.6, (255, 255, 255), 1)
                 cv2.putText(frame_capped, "Predicted: " + predicted_letter,
@@ -299,7 +329,7 @@ if __name__ == '__main__':
     elif args.mode == 'extract':
         # Extract features
         features, labels = extract_features(os.path.join(
-            args.data_dir, args.image_dir), args.feature_type) 
+            args.data_dir, args.image_dir), args.feature_type)
         # Save features and labels to disk
         np.save(os.path.join(args.data_dir,
                 f'{args.feature_type}_features.npy'), features)
@@ -308,9 +338,9 @@ if __name__ == '__main__':
     elif args.mode == 'visualize':
         # Load features and labels
         features = np.load(os.path.join(args.data_dir,
-                                                f'{args.feature_type}_features.npy'))
+                                        f'{args.feature_type}_features.npy'))
         labels = np.load(os.path.join(args.data_dir,
-                                                f'{args.feature_type}_labels.npy'))
+                                      f'{args.feature_type}_labels.npy'))
 
         # Reduce feature dimensionality using t-SNE
         tsne = TSNE(n_components=2, random_state=42)
@@ -319,20 +349,22 @@ if __name__ == '__main__':
         # Visualize using Seaborn
         df = pd.DataFrame(features_tsne, columns=['x', 'y'])
         df['label'] = [chr(ord('A') + label_id) for label_id in labels]
-        
+
         fig, ax = plt.subplots(figsize=(12, 10))
-        sns.scatterplot(data=df, x='x', y='y', hue='label', palette='tab10', ax=ax)
+        sns.scatterplot(data=df, x='x', y='y', hue='label',
+                        palette='tab10', ax=ax)
 
         plt.show()
     elif args.mode == 'train':
         # Extract features from collected images
         features = np.load(os.path.join(args.data_dir,
-                                                f'{args.feature_type}_features.npy'))
+                                        f'{args.feature_type}_features.npy'))
         labels = np.load(os.path.join(args.data_dir,
-                                                f'{args.feature_type}_labels.npy'))
+                                      f'{args.feature_type}_labels.npy'))
         # Train SVM classifier
         svm, accuracy = train_classifier(features, labels)
-        print(f'Trained SVM classifier with {len(features)} samples and accuracy {accuracy:.2f}')
+        print(
+            f'Trained SVM classifier with {len(features)} samples and accuracy {accuracy:.2f}')
 
         # Save trained SVM classifier to file
         model_file = os.path.join(args.data_dir, args.model_file)
